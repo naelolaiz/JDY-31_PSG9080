@@ -187,6 +187,11 @@ class BLEWorker(QThread):
                         self.status['ch1_output'] = parts[0].strip() == '1'
                         self.status['ch2_output'] = parts[1].strip() == '1'
                 
+                # Handle interface/screen status (r24)
+                elif cmd_type == '24':  # Interface setting
+                    self.status['interface'] = value.strip('.\r\n')
+                    # Parse the interface code to determine current screen
+                
                 # Handle the basic parameters (waveform, frequency, etc.)
                 elif (cmd_type.startswith('1') or cmd_type.startswith('2')) and int(cmd_type) <= 22:
                     # Extract channel number based on command pattern
@@ -414,6 +419,9 @@ class BLEWorker(QThread):
         # Generate read commands based on parameter patterns
         read_commands = []
         
+        # Query current interface/screen
+        read_commands.append(":r24=0.")
+        
         # Add output status (a single command for both channels)
         read_commands.append(":r10=0.")
         
@@ -517,6 +525,9 @@ class SignalGeneratorUI(QMainWindow):
         self.sweep_controls = {}  # Store sweep controls
         self.all_ui_controls = []   # List of all controls that can be enabled/disabled
         
+        # Track the current device screen
+        self.current_device_screen = "Default"
+        
         self.init_ui()
         
     def init_ui(self):
@@ -610,10 +621,56 @@ class SignalGeneratorUI(QMainWindow):
         refresh_btn.clicked.connect(self.refresh_device_status)
         self.all_ui_controls.append(refresh_btn)
         
+        # Device screen status and controls
+        screen_group = QGroupBox("Device Screen Control")
+        screen_layout = QVBoxLayout(screen_group)
+        
+        # Current screen display
+        screen_status_layout = QHBoxLayout()
+        screen_status_layout.addWidget(QLabel("Current Device Screen:"))
+        self.screen_status = QLabel("Default")
+        self.screen_status.setStyleSheet("font-weight: bold; color: blue;")
+        screen_status_layout.addWidget(self.screen_status)
+        screen_status_layout.addStretch(1)
+        screen_layout.addLayout(screen_status_layout)
+        
+        # Screen selection buttons
+        screen_buttons_layout = QHBoxLayout()
+        
+        # Channel screens
+        ch1_btn = QPushButton("CH1 Default")
+        ch1_btn.clicked.connect(lambda: self.change_device_screen("CH1"))
+        self.all_ui_controls.append(ch1_btn)
+        screen_buttons_layout.addWidget(ch1_btn)
+        
+        ch2_btn = QPushButton("CH2 Default")
+        ch2_btn.clicked.connect(lambda: self.change_device_screen("CH2"))
+        self.all_ui_controls.append(ch2_btn)
+        screen_buttons_layout.addWidget(ch2_btn)
+        
+        # Function screens
+        mod_btn = QPushButton("Modulation")
+        mod_btn.clicked.connect(lambda: self.change_device_screen("Modulation"))
+        self.all_ui_controls.append(mod_btn)
+        screen_buttons_layout.addWidget(mod_btn)
+        
+        meas_btn = QPushButton("Measurement")
+        meas_btn.clicked.connect(lambda: self.change_device_screen("Measurement"))
+        self.all_ui_controls.append(meas_btn)
+        screen_buttons_layout.addWidget(meas_btn)
+        
+        sweep_btn = QPushButton("Sweep")
+        sweep_btn.clicked.connect(lambda: self.change_device_screen("Sweep"))
+        self.all_ui_controls.append(sweep_btn)
+        screen_buttons_layout.addWidget(sweep_btn)
+        
+        screen_layout.addLayout(screen_buttons_layout)
+        
         # Add widgets to main layout
         main_layout.addLayout(connection_layout)
         main_layout.addLayout(manual_cmd_layout)
         main_layout.addWidget(logs_group)
+        main_layout.addWidget(screen_group)
         main_layout.addWidget(refresh_btn)
         main_layout.addWidget(self.tab_widget)
         
@@ -1390,6 +1447,9 @@ class SignalGeneratorUI(QMainWindow):
         
     def apply_all_settings(self, channel):
         """Apply all settings for the specified channel"""
+        # First, switch to the appropriate channel screen on the device
+        self.change_device_screen(f"CH{channel}")
+        
         for param in ["waveform", "frequency", "amplitude", "offset", "duty", "phase"]:
             self.update_parameter(channel, param)
         # Update output state last
@@ -1496,6 +1556,9 @@ class SignalGeneratorUI(QMainWindow):
         
     def apply_modulation_settings(self, channel):
         """Apply all modulation settings for the specified channel"""
+        # First, switch to modulation screen on the device
+        self.change_device_screen("Modulation")
+        
         # Update modulation type and source
         self.update_modulation_type(channel, self.modulation_controls[channel]["type"].currentIndex())
         self.update_modulation_source(channel, self.modulation_controls[channel]["source"].currentIndex())
@@ -1561,6 +1624,9 @@ class SignalGeneratorUI(QMainWindow):
         
     def apply_measurement_settings(self):
         """Apply all measurement settings"""
+        # First, switch to measurement screen on the device
+        self.change_device_screen("Measurement")
+        
         # Set measurement mode
         mode = self.measurement_controls["mode_group"].checkedId()
         self.ble_worker.queue_command(f":w63={mode}.")
@@ -1652,6 +1718,9 @@ class SignalGeneratorUI(QMainWindow):
         
     def apply_sweep_settings(self):
         """Apply all sweep settings"""
+        # First, switch to sweep screen on the device
+        self.change_device_screen("Sweep")
+        
         # Set sweep mode
         self.toggle_sweep_mode(None)
         
@@ -1796,6 +1865,137 @@ class SignalGeneratorUI(QMainWindow):
             if f'{ch_prefix}burst_count' in status and channel in self.modulation_controls:
                 self.modulation_controls[channel]["burst_count"].setValue(status[f'{ch_prefix}burst_count'])
                 
+    def change_device_screen(self, screen_type):
+        """Change the device screen to the specified type"""
+        command = ""
+        
+        if screen_type == "CH1":
+            command = ":w24=0,1,0,0."  # CH1 default interface
+            self.tab_widget.setCurrentIndex(0)  # Switch to CH1 tab
+        elif screen_type == "CH2":
+            command = ":w24=0,2,0,0."  # CH2 default interface
+            self.tab_widget.setCurrentIndex(1)  # Switch to CH2 tab
+        elif screen_type == "Modulation":
+            command = ":w24=0,1,0,7."  # Modulation interface
+            self.tab_widget.setCurrentIndex(2)  # Switch to Modulation tab
+        elif screen_type == "Measurement":
+            command = ":w24=0,4,0,1."  # Measurement interface
+            self.tab_widget.setCurrentIndex(3)  # Switch to Measurement tab
+        elif screen_type == "Sweep":
+            command = ":w24=0,6,0,1."  # Sweep frequency interface
+            self.tab_widget.setCurrentIndex(4)  # Switch to Sweep tab
+        
+        if command:
+            self.ble_worker.queue_command(command)
+            self.current_device_screen = screen_type
+            self.screen_status.setText(screen_type)
+            self.message_log.setText(f"Changed device screen to {screen_type}")
+    
+    def update_ui_from_status(self, status):
+        """Update UI controls based on received device status"""
+        # Check for interface/screen status if available
+        if 'interface' in status:
+            interface_code = status['interface']
+            screen_type = "Unknown"
+            
+            # Map interface codes to screen types
+            if interface_code.startswith("00,01"):
+                screen_type = "CH1"
+            elif interface_code.startswith("00,02"):
+                screen_type = "CH2"
+            elif interface_code == "00,01,00,07":
+                screen_type = "Modulation"
+            elif interface_code.startswith("00,04"):
+                screen_type = "Measurement"
+            elif interface_code.startswith("00,06"):
+                screen_type = "Sweep"
+            
+            if screen_type != "Unknown":
+                self.current_device_screen = screen_type
+                self.screen_status.setText(screen_type)
+        
+        # Update UI elements with received status values
+        if 'ch1_output' in status:
+            self.channel_controls[1]["enable"].setChecked(status['ch1_output'])
+            
+        if 'ch2_output' in status:
+            self.channel_controls[2]["enable"].setChecked(status['ch2_output'])
+        
+        for channel in [1, 2]:
+            ch_prefix = f"ch{channel}_"
+            
+            if f'{ch_prefix}waveform' in status:
+                waveform_value = status[f'{ch_prefix}waveform']
+                # Find the corresponding waveform name
+                for name, value in WAVEFORMS.items():
+                    if value == waveform_value:
+                        index = self.channel_controls[channel]["waveform"].findText(name)
+                        if index >= 0:
+                            self.channel_controls[channel]["waveform"].setCurrentIndex(index)
+                        break
+            
+            if f'{ch_prefix}frequency' in status and f'{ch_prefix}freq_unit' in status:
+                self.channel_controls[channel]["frequency"].setValue(status[f'{ch_prefix}frequency'])
+                self.channel_controls[channel]["freq_unit"].setCurrentIndex(status[f'{ch_prefix}freq_unit'])
+                
+            if f'{ch_prefix}amplitude' in status:
+                self.channel_controls[channel]["amplitude"].setValue(status[f'{ch_prefix}amplitude'])
+                
+            if f'{ch_prefix}offset' in status:
+                self.channel_controls[channel]["offset"].setValue(status[f'{ch_prefix}offset'])
+                
+            if f'{ch_prefix}duty' in status:
+                self.channel_controls[channel]["duty"].setValue(status[f'{ch_prefix}duty'])
+                
+            if f'{ch_prefix}phase' in status:
+                self.channel_controls[channel]["phase"].setValue(status[f'{ch_prefix}phase'])
+                
+            # Update modulation controls if available
+            if f'{ch_prefix}mod_type' in status and channel in self.modulation_controls:
+                self.modulation_controls[channel]["type"].setCurrentIndex(status[f'{ch_prefix}mod_type'])
+                
+            if f'{ch_prefix}mod_source' in status and channel in self.modulation_controls:
+                self.modulation_controls[channel]["source"].setCurrentIndex(status[f'{ch_prefix}mod_source'])
+                
+            if f'{ch_prefix}mod_wave' in status and channel in self.modulation_controls:
+                self.modulation_controls[channel]["wave"].setCurrentIndex(status[f'{ch_prefix}mod_wave'])
+                
+            if f'{ch_prefix}mod_freq' in status and channel in self.modulation_controls:
+                self.modulation_controls[channel]["frequency"].setValue(status[f'{ch_prefix}mod_freq'])
+                
+            if f'{ch_prefix}am_depth' in status and channel in self.modulation_controls:
+                self.modulation_controls[channel]["am_depth"].setValue(status[f'{ch_prefix}am_depth'])
+                
+            if f'{ch_prefix}fm_deviation' in status and channel in self.modulation_controls:
+                self.modulation_controls[channel]["fm_deviation"].setValue(status[f'{ch_prefix}fm_deviation'])
+                
+            if f'{ch_prefix}pm_phase' in status and channel in self.modulation_controls:
+                self.modulation_controls[channel]["pm_phase"].setValue(status[f'{ch_prefix}pm_phase'])
+                
+            if f'{ch_prefix}fsk_hopping' in status and channel in self.modulation_controls:
+                self.modulation_controls[channel]["fsk_hopping"].setValue(status[f'{ch_prefix}fsk_hopping'])
+                
+            if f'{ch_prefix}pulse_width' in status and channel in self.modulation_controls:
+                self.modulation_controls[channel]["pulse_width"].setValue(status[f'{ch_prefix}pulse_width'])
+                
+            if f'{ch_prefix}pulse_period' in status and channel in self.modulation_controls:
+                self.modulation_controls[channel]["pulse_period"].setValue(status[f'{ch_prefix}pulse_period'])
+                
+            if f'{ch_prefix}pulse_inversion' in status and channel in self.modulation_controls:
+                self.modulation_controls[channel]["pulse_inversion"].setCurrentIndex(status[f'{ch_prefix}pulse_inversion'])
+                
+            if f'{ch_prefix}burst_idle' in status and channel in self.modulation_controls:
+                self.modulation_controls[channel]["burst_idle"].setCurrentIndex(status[f'{ch_prefix}burst_idle'])
+                
+            if f'{ch_prefix}polarity' in status and channel in self.modulation_controls:
+                self.modulation_controls[channel]["polarity"].setCurrentIndex(status[f'{ch_prefix}polarity'])
+                
+            if f'{ch_prefix}trigger_source' in status and channel in self.modulation_controls:
+                self.modulation_controls[channel]["trigger_source"].setCurrentIndex(status[f'{ch_prefix}trigger_source'])
+                
+            if f'{ch_prefix}burst_count' in status and channel in self.modulation_controls:
+                self.modulation_controls[channel]["burst_count"].setValue(status[f'{ch_prefix}burst_count'])
+    
     def closeEvent(self, event):
         # Clean up BLE worker thread
         self.ble_worker.stop()
