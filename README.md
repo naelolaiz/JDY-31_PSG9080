@@ -10,3 +10,12 @@ The serial protocol is indicated in the "[PSG Communication Protocol.pdf](doc/PS
 Testing the received commands using the official closed android [app](http://68.168.132.244/APP/JDS8000.apk):
 ![logic_analyzer](doc/screenshot_logic_analyzer.png)
 
+
+= USE =
+```console
+$ pipenv install
+$ pipenv run python control_bt.py
+```
+
+![screenshot_app](doc/screenshot_python_app.png)
+
